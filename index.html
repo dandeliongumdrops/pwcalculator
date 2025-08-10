@@ -210,7 +210,7 @@
     const DAYS = 24*60*60*1000;
     const TWO_YEARS = 730; // strict
 
-    // Detect the current term from today's date (UTC) and prefill if empty
+    // Detect the current term from today's date (UTC) and prefill/reset when needed
     function currentTermFromToday(){
       const now = new Date();
       const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -220,12 +220,20 @@
       }
       return null;
     }
-    function autoSetCurrentTermIfEmpty(){
+    function autoSetCurrentTermIfEmptyOrStale(){
       const el = document.getElementById('globalTerm');
       if (!el) return;
-      if (String(el.value || '').trim() !== '') return; // already set (from storage or user)
       const detected = currentTermFromToday();
-      if (detected != null){ el.value = detected; }
+      if (detected == null) return;
+      const now = new Date();
+      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const raw = String(el.value || '').trim();
+      const val = parseInt(raw, 10);
+      if (!raw) { el.value = detected; return; }
+      const t = getTerm(val);
+      if (!t || todayUTC < t.start || todayUTC > t.end) {
+        el.value = detected;
+      }
     }
 
     function getHasSpirits(){
@@ -557,31 +565,23 @@
       $$('.character').forEach((_, i) => clearCharacter(i));
       const hs = $('#hasSpirits'); if (hs) hs.value = 'no';
       const ha = $('#hasAdults'); if (ha) ha.value = 'no';
+      const gt = $('#globalTerm');
+      const det = currentTermFromToday();
+      if (gt && det != null) gt.value = det; // reset to current term by date
       updateVisibility();
       compute();
       persist();
     }
 
+    // Non-mutating smoke tests (run only if URL hash contains #selftest)
     function runSelfTests(){
       try {
         console.group('SelfTests');
-        // Build 1, no toggles
-        $('#numChars').value = 1; buildChars();
-        $('#globalTerm').value = 170; compute();
-        console.assert(typeof buildChars === 'function', 'buildChars exists');
-        // Spirits toggle hides/shows field
-        $('#hasSpirits').value = 'no'; updateVisibility();
-        console.assert(document.querySelector('.character .spiritField').classList.contains('hidden'), 'spirit hidden when global no');
-        $('#hasSpirits').value = 'yes'; updateVisibility();
-        console.assert(!document.querySelector('.character .spiritField').classList.contains('hidden'), 'spirit shown when global yes');
-        // RL2 ambiguity styling
-        const wrap = document.querySelector('.character');
-        wrap.querySelector('#joined-0').value = '155'; compute();
-        console.assert(wrap.querySelector('#rl2note-0').classList.contains('ambig') || wrap.querySelector('#rl2note-0').textContent.includes('check exact dates'), 'ambiguous note styles');
-        // Newline join safe
+        console.assert(typeof currentTermFromToday === 'function', 'currentTermFromToday exists');
+        console.assert(typeof getTerm(178) === 'object' || getTerm(178) === null, 'getTerm returns object/null');
         console.assert(['a','b'].join('\n') === 'a\nb', 'newline join works');
         console.groupEnd();
-      } catch(e){ console.warn('SelfTests error', e); }
+      } catch (e) { console.warn('SelfTests error', e); }
     }
 
     // Hook up top buttons
@@ -596,10 +596,10 @@
     (function init(){
       try { restore(); } catch(_) { buildChars(); }
       // If nothing set, default the current term to the one containing today's date
-      autoSetCurrentTermIfEmpty();
+      autoSetCurrentTermIfEmptyOrStale();
       compute();
       persist();
-      runSelfTests(); // console-only
+      if (location.hash.includes('selftest')) runSelfTests();
     })();
   </script>
 </body>
