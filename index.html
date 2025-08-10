@@ -48,6 +48,23 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .hidden { display: none; }
     .ambig { color: var(--bad); font-weight: 800; }
+
+    /* --- Padding/spacing polish --- */
+    *, *::before, *::after { box-sizing: border-box; }
+    /* add vertical rhythm between stacked rows inside cards */
+    .card > .row + .row { margin-top: 12px; }
+    .character .row + .row,
+    .character .row-3 + .row-3,
+    .character .row-3 + .row { margin-top: 12px; }
+    /* consistent control sizing & spacing between label and control */
+    label + input, label + select { margin-top: 6px; }
+    input[type="text"], input[type="number"], select { min-height: 44px; line-height: 1.25; }
+    /* pills tighten up vertically */
+    .pill { line-height: 1; }
+    /* header area spacing so status + clear don’t hug the edge */
+    .character .title { padding: 2px 2px; }
+    .character .title .btn-row { align-items: center; gap: 12px; }
+    .character .status { margin-left: 4px; }
   </style>
 </head>
 <body>
@@ -136,14 +153,14 @@
         <div class="adultCreatedField">
           <label for="adultCreated-{{i}}">Is this an adult-created character?</label>
           <select id="adultCreated-{{i}}">
-            <option value="no">No</option>
+            <option value="no" selected>No</option>
             <option value="yes">Yes</option>
           </select>
         </div>
         <div class="spiritField">
           <label for="spirit-{{i}}">Spirit character?</label>
           <select id="spirit-{{i}}">
-            <option value="no">No</option>
+            <option value="no" selected>No</option>
             <option value="yes">Yes</option>
           </select>
         </div>
@@ -192,6 +209,24 @@
     const getTerm = (n) => TIMELINE[n] ? { start: toUTC(TIMELINE[n].s), end: toUTC(TIMELINE[n].e) } : null;
     const DAYS = 24*60*60*1000;
     const TWO_YEARS = 730; // strict
+
+    // Detect the current term from today's date (UTC) and prefill if empty
+    function currentTermFromToday(){
+      const now = new Date();
+      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      for (const key of Object.keys(TIMELINE)){
+        const t = getTerm(parseInt(key,10));
+        if (t && todayUTC >= t.start && todayUTC <= t.end) return parseInt(key,10);
+      }
+      return null;
+    }
+    function autoSetCurrentTermIfEmpty(){
+      const el = document.getElementById('globalTerm');
+      if (!el) return;
+      if (String(el.value || '').trim() !== '') return; // already set (from storage or user)
+      const detected = currentTermFromToday();
+      if (detected != null){ el.value = detected; }
+    }
 
     function getHasSpirits(){
       const el = $('#hasSpirits');
@@ -560,6 +595,10 @@
     // initial
     (function init(){
       try { restore(); } catch(_) { buildChars(); }
+      // If nothing set, default the current term to the one containing today's date
+      autoSetCurrentTermIfEmpty();
+      compute();
+      persist();
       runSelfTests(); // console-only
     })();
   </script>
