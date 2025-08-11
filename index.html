@@ -1,681 +1,278 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PW Twin Eligibility Calculator</title>
-  <style>
-    :root {
-      --bg: #f7f8fc;
-      --panel: #ffffff;
-      --ink: #0a1226;
-      --muted: #5b657a;
-      --accent: #3a63ff;
-      --good: #2ecc71;
-      --bad: #e74c3c;
-      --warn: #f39c12;
-      --border: rgba(10,18,38,.12);
+import React, { useEffect, useMemo, useState } from "react";
+
+// ---------------- Utilities ----------------
+const todayISO = () => new Date().toISOString().slice(0, 10);
+function parseISO(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+function addYears(d, n) { const x = new Date(d); x.setFullYear(x.getFullYear() + n); return x; }
+function uid() { return Math.random().toString(36).slice(2, 9); }
+function clampInt(n, min, max) { const v = typeof n === "number" ? n : parseInt(String(n || 0), 10); if (Number.isNaN(v)) return min; return Math.max(min, Math.min(max, v)); }
+function formatAvg(n) { if (n == null || Number.isNaN(n)) return "—"; return Number.isInteger(n) ? String(n) : n.toFixed(2); }
+
+// ------------- TERM MAP (subset) -------------
+// Enough for current term detection and recent joins; if a join term isn't here,
+// we conservatively default the 2-year rule to 20/term and show an ambiguity tag only when applicable.
+const TERM_MAP = {
+  167: { start: "2024-02-24", end: "2024-04-05" },
+  168: { start: "2024-04-06", end: "2024-05-17" },
+  169: { start: "2024-05-18", end: "2024-06-29" },
+  170: { start: "2024-07-06", end: "2024-08-16" },
+  171: { start: "2024-08-17", end: "2024-09-28" },
+  172: { start: "2024-10-05", end: "2024-11-15" },
+  173: { start: "2024-11-16", end: "2024-12-28" },
+  174: { start: "2025-01-04", end: "2025-02-14" },
+  175: { start: "2025-02-15", end: "2025-03-28" },
+  176: { start: "2025-04-05", end: "2025-05-16" },
+  177: { start: "2025-05-17", end: "2025-06-28" },
+  178: { start: "2025-07-05", end: "2025-08-15" },
+};
+
+export default function App() {
+  // Follow system dark mode (no toggle UI)
+  useEffect(() => {
+    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => { if (mq && mq.matches) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark'); };
+    apply();
+    mq && mq.addEventListener && mq.addEventListener('change', apply);
+    return () => { mq && mq.removeEventListener && mq.removeEventListener('change', apply); };
+  }, []);
+
+  const today = todayISO();
+  const currentTerm = useMemo(() => {
+    const td = parseISO(today);
+    for (const [tStr, range] of Object.entries(TERM_MAP)) {
+      const t = Number(tStr);
+      const s = parseISO(range.start);
+      const e = parseISO(range.end);
+      if (td >= s && td <= e) return t;
     }
-    html, body { height: 100%; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: var(--bg); color: var(--ink); }
-    .wrap { max-width: 980px; margin: 24px auto 80px; padding: 0 16px; }
-    h1 { font-size: 28px; margin: 12px 0 8px; }
-    p.lead { color: var(--muted); margin-top: 0; }
-    .card { background: var(--panel); border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.05); border-radius: 16px; padding: 18px; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    /* spacing fix for name ↔ dropdowns */
-    .character .row-3:first-of-type { grid-template-columns: minmax(260px,1fr) minmax(220px,1fr) minmax(220px,1fr); gap: 16px; }
-    @media (max-width: 800px){ .row, .row-3 { grid-template-columns: 1fr; } }
-    label { display:block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-    input[type="text"], input[type="number"], select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: #fbfcff; color: var(--ink); font-size: 15px; }
-    input[type="number"] { background: #fff; }
-    .pill { display:inline-block; padding: 6px 10px; border-radius: 999px; font-size: 12px; border:1px solid var(--border); color: var(--muted); background:#f5f7ff; }
-    .btn { appearance:none; border:0; background: var(--accent); color:#fff; padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor:pointer; }
-    .btn.subtle { background: #eef1ff; color: var(--accent); border:1px solid var(--border); }
-    .btn.ghost { background: transparent; color: var(--muted); border:1px solid var(--border); }
-    .btn-row { display:flex; gap: 10px; flex-wrap: wrap; }
-    .character { border:1px solid var(--border); border-radius: 14px; padding: 14px; background: #ffffff; }
-    .title { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 8px; }
-    .status { font-weight:700; }
-    .status.ok { color: var(--good); }
-    .status.warn { color: var(--warn); }
-    .status.bad { color: var(--bad); }
-    .small { font-size: 12px; color: var(--muted); }
-    .grid { display: grid; gap: 12px; }
-    .footnote { color: var(--muted); font-size: 12px; }
-    .result-box { padding: 12px; border-radius: 12px; border:1px solid var(--border); background: #fafbff; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .hidden { display: none; }
-    .ambig { color: var(--bad); font-weight: 800; }
+    return Math.max(...Object.keys(TERM_MAP).map(Number));
+  }, [today]);
 
-    /* --- Padding/spacing polish --- */
-    *, *::before, *::after { box-sizing: border-box; }
-    /* add vertical rhythm between stacked rows inside cards */
-    .card > .row + .row { margin-top: 12px; }
-    .character .row + .row,
-    .character .row-3 + .row-3,
-    .character .row-3 + .row { margin-top: 12px; }
-    /* consistent control sizing & spacing between label and control */
-    label + input, label + select { margin-top: 6px; }
-    input[type="text"], input[type="number"], select { min-height: 44px; line-height: 1.25; }
-    /* pills tighten up vertically */
-    .pill { line-height: 1; }
-    /* header area spacing so status + clear don’t hug the edge */
-    .character .title { padding: 2px 2px; }
-    .character .title .btn-row { align-items: center; gap: 12px; }
-    .character .status { margin-left: 4px; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>PW Twin Eligibility Calculator</h1>
-    <p class="lead">Quick entry. Add your characters and we will check per character minimums and the overall average. Spirits have no minimum and are included in the overall average. Enter the <strong>current term number</strong> below, and each character's <strong>joined term</strong>; we will auto-calc their <em>terms on board</em> and whether they are <em>≥ 2 real-life years</em> on PW (strict).</p>
+  // ---------------- State ----------------
+  const [characters, setCharacters] = useState([blankChar(), blankChar()]);
+  function blankChar() {
+    return { id: uid(), name: "", joinedTerm: "", isAdultCreated: false, isSpirit: false, currentPosts: "", graduationCount: "", hasAdultCheck: false, adultCheckTerm: "", adultCheckPostCount: "" };
+  }
+  function updateChar(id, patch) { setCharacters(prev => prev.map(c => (c.id === id ? { ...c, ...patch } : c))); }
+  function addChar() { if (characters.length >= 10) return; setCharacters(prev => [...prev, blankChar()]); }
+  function removeChar(id) { setCharacters(prev => prev.filter(c => c.id !== id)); }
+  function clearChar(id) { setCharacters(prev => prev.map(c => c.id === id ? blankChar() : c)); }
+  function clearAll() { setCharacters([blankChar(), blankChar()]); }
 
-    <div class="card" id="config">
-      <div class="row">
-        <div>
-          <label for="globalTerm">Current term number</label>
-          <input id="globalTerm" type="number" min="1" step="1" value="" placeholder="e.g., 178" />
-        </div>
-        <div>
-          <label for="numChars">How many characters do you have?</label>
-          <input id="numChars" type="number" min="1" step="1" value="1" />
-        </div>
-      </div>
+  // ------------- Computations per character -------------
+  function computeChar(c) {
+    let termsOnBoard = null;
+    if (typeof c.joinedTerm === 'number') {
+      termsOnBoard = currentTerm - c.joinedTerm + 1;
+      if (termsOnBoard < 1) termsOnBoard = null;
+    }
 
-      <div class="row">
-        <div>
-          <label for="hasSpirits">Do you have any spirit characters?</label>
-          <select id="hasSpirits">
-            <option value="no" selected>No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
-        <div>
-          <label for="hasAdults">Do you have any adult-created characters?</label>
-          <select id="hasAdults">
-            <option value="no" selected>No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
-      </div>
+    // Hogwarts vs AW + derived counts
+    let stage = '';
+    let hogwartsYear = null;
+    let awTerms = null;
+    if (typeof c.joinedTerm === 'number') {
+      if (c.isAdultCreated) {
+        stage = 'AW';
+        awTerms = termsOnBoard ?? null;
+      } else if (termsOnBoard != null) {
+        if (termsOnBoard <= 7) { stage = 'Hogwarts'; hogwartsYear = termsOnBoard; }
+        else { stage = 'AW'; awTerms = termsOnBoard - 7; }
+      }
+    }
 
-      <div class="btn-row" style="margin-top:12px;">
-        <button class="btn" id="build">Build character inputs</button>
-        <button class="btn subtle" id="demoFill">Demo data</button>
-        <button class="btn ghost" id="clearAll">Clear all</button>
+    // 2+ RL years since join term (conservative)
+    let twoPlusYears = false, twoPlusAmbiguous = false;
+    if (typeof c.joinedTerm === 'number' && TERM_MAP[c.joinedTerm]) {
+      const { start, end } = TERM_MAP[c.joinedTerm];
+      const start2y = addYears(parseISO(start), 2);
+      const end2y = addYears(parseISO(end), 2);
+      const td = parseISO(today);
+      if (td >= end2y) twoPlusYears = true; else if (td >= start2y && td < end2y) twoPlusAmbiguous = true;
+    }
+
+    const minRequired = c.isSpirit ? 0 : (twoPlusYears ? 10 : 20); // ambiguous => 20 w/ flag
+
+    const posts = c.currentPosts === '' ? null : Number(c.currentPosts);
+    const perTermAvg = (posts != null && termsOnBoard && termsOnBoard > 0) ? (posts / termsOnBoard) : null;
+    const meetsMinimum = perTermAvg == null ? null : perTermAvg >= minRequired;
+
+    const grad = typeof c.graduationCount === 'number' ? Number(c.graduationCount) : null;
+    const hogwartsAvgPerTerm = grad != null ? grad / 7 : null;
+    const awAvgPerTerm = (stage === 'AW' && grad != null && posts != null && awTerms && awTerms > 0 && posts >= grad)
+      ? (posts - grad) / awTerms : null;
+
+    let sinceAdultCheckAvg = null;
+    if (stage === 'AW' && c.hasAdultCheck && typeof c.adultCheckTerm === 'number' && typeof c.adultCheckPostCount === 'number' && posts != null) {
+      const termsSince = Math.max(1, currentTerm - c.adultCheckTerm + 1);
+      const delta = posts - c.adultCheckPostCount;
+      if (termsSince > 0 && delta >= 0) sinceAdultCheckAvg = delta / termsSince;
+    }
+
+    return { termsOnBoard, stage, hogwartsYear, awTerms, twoPlusYears, twoPlusAmbiguous, minRequired, perTermAvg, meetsMinimum, hogwartsAvgPerTerm, awAvgPerTerm, sinceAdultCheckAvg };
+  }
+
+  const computed = useMemo(() => {
+    const map = {}; characters.forEach(c => { map[c.id] = computeChar(c); }); return map;
+  }, [characters, currentTerm, today]);
+
+  const totals = useMemo(() => {
+    const count = characters.length;
+    const perTermAverages = characters.map(c => computed[c.id]?.perTermAvg ?? 0);
+    const avg = count ? perTermAverages.reduce((a,b)=>a+b,0) / count : 0;
+    const requiredTotal = characters.reduce((s,c)=> s + (computed[c.id]?.minRequired || 0), 0);
+    const allHavePosts = characters.every(c => c.currentPosts !== "");
+    const overallOk = avg >= 20 || !allHavePosts;
+    const perCharOk = characters.every(c => { const pc = computed[c.id]; if (!pc) return true; if (c.currentPosts === '' || pc.perTermAvg == null) return true; return pc.meetsMinimum ?? true; });
+    const eligible = perCharOk && overallOk && characters.some(c => c.currentPosts !== '');
+    return { count, avg, requiredTotal, eligible };
+  }, [characters, computed]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+      <div className="max-w-6xl mx-auto px-6 py-10">
+        <header className="mb-6">
+          <h1 className="text-3xl font-semibold leading-tight">PW Twin Eligibility Calculator</h1>
+          <p className="mt-2 text-base text-slate-600 dark:text-slate-400">Static current date & term are used. Posts‑per‑term determines eligibility (conservative 2‑year rule).</p>
+        </header>
+
+        {/* Context */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-slate-200/50 dark:border-slate-700/50 mb-8">
+          <div><div className="text-xs uppercase tracking-wide text-slate-500">Today</div><div className="mt-1 text-lg font-medium">{today}</div></div>
+          <div><div className="text-xs uppercase tracking-wide text-slate-500">Current term</div><div className="mt-1 text-lg font-medium">{currentTerm}</div></div>
+          <div className="text-xs text-slate-500 md:col-span-1 col-span-3">Based on embedded PW timeline for recent terms.</div>
+        </section>
+
+        {/* Characters */}
+        <div className="space-y-6">
+          {characters.map((c, idx) => {
+            const pc = computed[c.id];
+            const inAW = pc?.stage === 'AW';
+            const showGradField = inAW && !c.isAdultCreated;
+            const below = (c.currentPosts !== '' && pc && pc.meetsMinimum === false);
+            return (
+              <section key={c.id} className={`relative rounded-2xl border p-6 shadow-sm bg-white dark:bg-slate-800 border-slate-200/60 dark:border-slate-700/50`}>
+                <div className="absolute right-5 top-5 text-xs text-slate-500">{below ? <span className="text-rose-500 font-medium">Below minimum</span> : <span>Character {idx + 1}</span>}</div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">Character name</label>
+                    <input value={c.name} onChange={e => updateChar(c.id, { name: e.target.value })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                  </div>
+
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">What term did they join?</label>
+                    <input type="number" value={c.joinedTerm} onChange={e => updateChar(c.id, { joinedTerm: e.target.value === '' ? '' : clampInt(e.target.value, 1, 999) })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                    <p className="text-xs mt-1 text-slate-500">Terms on board: <span className="font-medium">{pc?.termsOnBoard ?? '—'}</span></p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">Is this an adult‑created character?</label>
+                    <select value={c.isAdultCreated ? 'yes' : 'no'} onChange={e => updateChar(c.id, { isAdultCreated: e.target.value === 'yes' })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none"><option value="no">No</option><option value="yes">Yes</option></select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">Spirit character?</label>
+                    <select value={c.isSpirit ? 'yes' : 'no'} onChange={e => updateChar(c.id, { isSpirit: e.target.value === 'yes' })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none"><option value="no">No</option><option value="yes">Yes</option></select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">Hogwarts / AW status (auto)</label>
+                    <div className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center text-sm">{pc?.stage || '—'}</div>
+                    <p className="text-xs mt-1 text-slate-500">
+                      {inAW && pc?.awTerms != null ? (
+                        <>In AW, term <span className="font-medium">{pc.awTerms}</span></>
+                      ) : (!inAW && pc?.hogwartsYear != null) ? (
+                        <>In Hogwarts, Year <span className="font-medium">{pc.hogwartsYear}</span></>
+                      ) : (
+                        <>Hogwarts lasts 7 terms, then AW.</>
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-slate-500">Current post count</label>
+                    <input type="number" value={c.currentPosts} onChange={e => updateChar(c.id, { currentPosts: e.target.value === '' ? '' : clampInt(e.target.value, 0, 1000000) })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                    <div className="text-xs mt-1 text-slate-500">Minimum required: <span className="font-medium">{pc?.minRequired ?? '—'}</span>{pc?.perTermAvg != null && <> • Your avg: <span className="font-medium">{formatAvg(pc.perTermAvg)}</span></>}{pc?.twoPlusAmbiguous && <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-200 text-amber-900">check 2y date</span>}</div>
+                  </div>
+
+                  {showGradField && (
+                    <div>
+                      <label className="text-xs uppercase tracking-wide text-slate-500">Graduation post count (end of Hogwarts)</label>
+                      <input type="number" value={c.graduationCount} onChange={e => updateChar(c.id, { graduationCount: e.target.value === '' ? '' : clampInt(e.target.value, 0, 1000000) })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                    </div>
+                  )}
+
+                  {inAW && (
+                    <>
+                      <div>
+                        <label className="text-xs uppercase tracking-wide text-slate-500">Adult check after graduation?</label>
+                        <select value={c.hasAdultCheck ? 'yes' : 'no'} onChange={e => updateChar(c.id, { hasAdultCheck: e.target.value === 'yes', adultCheckTerm: e.target.value === 'yes' ? c.adultCheckTerm : '', adultCheckPostCount: e.target.value === 'yes' ? c.adultCheckPostCount : '' })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none"><option value="no">No</option><option value="yes">Yes</option></select>
+                      </div>
+                      {c.hasAdultCheck && (
+                        <>
+                          <div>
+                            <label className="text-xs uppercase tracking-wide text-slate-500">Adult check term</label>
+                            <input type="number" value={c.adultCheckTerm} onChange={e => updateChar(c.id, { adultCheckTerm: e.target.value === '' ? '' : clampInt(e.target.value, 1, 999) })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                          </div>
+                          <div>
+                            <label className="text-xs uppercase tracking-wide text-slate-500">Adult check post count</label>
+                            <input type="number" value={c.adultCheckPostCount} onChange={e => updateChar(c.id, { adultCheckPostCount: e.target.value === '' ? '' : clampInt(e.target.value, 0, 1000000) })} className="w-full mt-1 px-3 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 outline-none" />
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Per-character Summary */}
+                <div className="mt-5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700/50 p-4 text-sm">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div><div className="text-slate-500">Terms on board</div><div className="font-medium">{pc?.termsOnBoard ?? '—'}</div></div>
+                    <div><div className="text-slate-500">AW terms</div><div className="font-medium">{pc?.awTerms ?? 0}</div></div>
+                    <div><div className="text-slate-500">Posts overall</div><div className="font-medium">{c.currentPosts === '' ? '—' : c.currentPosts}</div></div>
+                    <div><div className="text-slate-500">Overall avg/term</div><div className="font-medium">{pc?.perTermAvg != null ? formatAvg(pc.perTermAvg) : '—'}</div></div>
+                    <div><div className="text-slate-500">Hogwarts avg/term</div><div className="font-medium">{pc?.hogwartsAvgPerTerm != null ? formatAvg(pc.hogwartsAvgPerTerm) : '—'}</div></div>
+                    <div><div className="text-slate-500">AW avg/term</div><div className="font-medium">{pc?.awAvgPerTerm != null ? formatAvg(pc.awAvgPerTerm) : '—'}</div></div>
+                    {pc?.sinceAdultCheckAvg != null && (
+                      <div className="md:col-span-3"><div className="text-slate-500">Since adult check avg/term</div><div className="font-medium">{formatAvg(pc.sinceAdultCheckAvg)}</div></div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2 justify-end items-center">
+                  <div className="flex gap-2">
+                    <button onClick={() => clearChar(c.id)} className="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-700">Clear</button>
+                    <button onClick={() => removeChar(c.id)} className="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-700">Remove</button>
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+
+          <div className="flex gap-3 items-center">
+            <button onClick={addChar} disabled={characters.length >= 10} className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white disabled:opacity-40">Add character</button>
+            <div className="text-sm text-slate-500">{characters.length}/10</div>
+            <button onClick={clearAll} className="ml-auto px-4 py-2.5 rounded-xl bg-rose-600 text-white">Clear all</button>
+          </div>
+        </div>
+
+        {/* Results */}
+        <section className="mt-8 rounded-2xl border p-6 shadow-sm bg-white dark:bg-slate-800 border-slate-200/60 dark:border-slate-700/50">
+          <h2 className="text-xl font-semibold mb-3">Results</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+            <div className="space-y-1.5">
+              <div>Total characters counted: <span className="font-medium">{characters.length}</span></div>
+              <div>Overall average per character: <span className="font-medium">{formatAvg(totals.avg)}</span></div>
+              <div>Required total this term (sum of mins): <span className="font-medium">{characters.reduce((s,c)=> s + (computed[c.id]?.minRequired || 0), 0)}</span></div>
+            </div>
+            <div className="space-y-1.5">
+              <div>Eligibility: {totals.eligible ? (<span className="text-emerald-600 font-semibold">Eligible</span>) : (<span className="text-rose-600 font-semibold">Not eligible</span>)}</div>
+              <div className="text-slate-500">Rule summary: Under 2 RL years: ≥ 20/term. 2+ RL years: ≥ 10/term. Spirits have no per‑character minimum. Overall average must be ≥ 20. Ambiguous 2‑year windows default to 20 and show a check flag.</div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
-
-    <div style="height:12px"></div>
-
-    <div class="grid" id="characters"></div>
-
-    <div style="height:12px"></div>
-
-    <div class="card" id="results" style="display:none;">
-      <h3 style="margin:4px 0 10px;">Results</h3>
-      <div class="row">
-        <div class="result-box">
-          <div>Total characters counted: <span class="mono" id="counted"></span></div>
-          <div>Total posts per term (sum): <span class="mono" id="sumPosts"></span></div>
-          <div>Overall average per character: <span class="mono" id="avgPosts"></span></div>
-          <div>Required total posts this term: <span class="mono" id="requiredTotal"></span> <span class="small">(20 × characters)</span></div>
-        </div>
-        <div class="result-box">
-          <div>Eligibility: <span id="eligibility" class="status"></span></div>
-          <div class="small">Rule summary: Each character under 2 RL years must be at ≥20 posts per term. Characters ≥2 RL years must be at ≥10. Spirits have no minimum. Overall average must be ≥20.</div>
-        </div>
-      </div>
-      <div class="btn-row" style="margin-top:12px;">
-        <button class="btn" id="copySummary">Copy summary</button>
-      </div>
-    </div>
-
-    <p class="footnote">Notes: This tool focuses on activity math. Staff may also consider probations, deletions, first year limits, and other context that this calculator does not judge.</p>
-  </div>
-
-  <template id="charTpl">
-    <div class="character" data-index="{{i}}">
-      <div class="title">
-        <div><span class="pill">Character {{iLabel}}</span></div>
-        <div class="btn-row">
-          <button class="btn ghost btn-clear-one" data-i="{{i}}">Clear</button>
-          <div class="status" id="charStatus-{{i}}"></div>
-        </div>
-      </div>
-
-      <!-- Identity & flags -->
-      <div class="row-3">
-        <div>
-          <label for="name-{{i}}">Character name</label>
-          <input type="text" id="name-{{i}}" placeholder="e.g., Jane Smith" />
-        </div>
-        <div class="adultCreatedField">
-          <label for="adultCreated-{{i}}">Is this an adult-created character?</label>
-          <select id="adultCreated-{{i}}">
-            <option value="no" selected>No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
-        <div class="spiritField">
-          <label for="spirit-{{i}}">Spirit character?</label>
-          <select id="spirit-{{i}}">
-            <option value="no" selected>No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Join & computed tenure -->
-      <div class="row-3">
-        <div>
-          <label for="joined-{{i}}">What term did they join? (number)</label>
-          <input type="number" id="joined-{{i}}" min="1" step="1" placeholder="e.g., 168" />
-          <div class="small">Uses the current term number above.</div>
-        </div>
-        <div>
-          <label>Terms on board (auto)</label>
-          <div id="terms-{{i}}" class="pill">—</div>
-          <div class="small" style="margin-top:4px;">School/AW status</div>
-          <div id="track-{{i}}" class="pill" style="margin-top:4px;">—</div>
-        </div>
-        <div>
-          <label>2+ RL years? (auto)</label>
-          <div id="rl2pill-{{i}}" class="pill">—</div>
-          <div id="rl2note-{{i}}" class="small"></div>
-        </div>
-      </div>
-
-      <!-- Graduation & sectional averages (shown for regular characters in AW) -->
-      <div class="row-3 gradBlock hidden">
-        <div>
-          <label for="grad-{{i}}">Graduation posts total (end of 7th term)</label>
-          <input type="number" id="grad-{{i}}" min="0" step="1" value="" />
-          <div id="gradNote-{{i}}" class="small"></div>
-        </div>
-        <div>
-          <label>Avg (Hogwarts)</label>
-          <div id="avgHG-{{i}}" class="pill">—</div>
-        </div>
-        <div>
-          <label>Avg (AW)</label>
-          <div id="avgAW-{{i}}" class="pill">—</div>
-        </div>
-      </div>
-
-      <!-- Totals & minimums -->
-      <div class="row-3">
-        <div>
-          <label for="total-{{i}}">Current Post Count</label>
-          <input type="number" id="total-{{i}}" min="0" step="1" value="" />
-        </div>
-        <div>
-          <label>Avg overall (auto)</label>
-          <div id="autoPosts-{{i}}" class="pill">0.0</div>
-          <input type="hidden" id="posts-{{i}}" value="0" />
-        </div>
-        <div>
-          <label>Minimum required for this character</label>
-          <div id="minReq-{{i}}" class="pill">—</div>
-        </div>
-      </div>
-    </div>
-  </template>
-
-  <script>
-    const $ = s => document.querySelector(s);
-    const $$ = s => Array.from(document.querySelectorAll(s));
-
-    // --- Timeline map (terms → start/end in UTC) ---
-    const TIMELINE = {
-      120:{s:'2018-04-07',e:'2018-05-18'}, 121:{s:'2018-05-19',e:'2018-06-30'}, 122:{s:'2018-07-07',e:'2018-08-17'}, 123:{s:'2018-08-18',e:'2018-09-28'}, 124:{s:'2018-09-29',e:'2018-11-23'}, 125:{s:'2018-11-24',e:'2019-01-04'}, 126:{s:'2019-01-05',e:'2019-02-15'}, 127:{s:'2019-02-16',e:'2019-03-30'}, 128:{s:'2019-04-06',e:'2019-05-17'}, 129:{s:'2019-05-18',e:'2019-06-29'}, 130:{s:'2019-07-06',e:'2019-08-16'}, 131:{s:'2019-08-17',e:'2019-09-28'}, 132:{s:'2019-10-05',e:'2019-11-15'}, 133:{s:'2019-11-16',e:'2019-12-28'}, 134:{s:'2020-01-04',e:'2020-02-14'}, 135:{s:'2020-02-15',e:'2020-03-28'}, 136:{s:'2020-04-04',e:'2020-05-15'}, 137:{s:'2020-05-16',e:'2020-06-27'}, 138:{s:'2020-07-04',e:'2020-08-14'}, 139:{s:'2020-08-15',e:'2020-09-26'}, 140:{s:'2020-10-03',e:'2020-11-13'}, 141:{s:'2020-11-14',e:'2020-12-26'}, 142:{s:'2021-01-02',e:'2021-02-12'}, 143:{s:'2021-02-13',e:'2021-03-27'}, 144:{s:'2021-04-03',e:'2021-05-13'}, 145:{s:'2021-05-14',e:'2021-06-26'}, 146:{s:'2021-07-03',e:'2021-08-13'}, 147:{s:'2021-08-14',e:'2021-09-25'}, 148:{s:'2021-10-02',e:'2021-11-13'}, 149:{s:'2021-11-20',e:'2021-12-25'}, 150:{s:'2022-01-01',e:'2022-02-11'}, 151:{s:'2022-02-12',e:'2022-03-26'}, 152:{s:'2022-04-02',e:'2022-05-13'}, 153:{s:'2022-05-14',e:'2022-06-25'}, 154:{s:'2022-07-03',e:'2022-08-12'}, 155:{s:'2022-08-13',e:'2022-09-24'}, 156:{s:'2022-10-01',e:'2022-11-11'}, 157:{s:'2022-11-12',e:'2022-12-24'}, 158:{s:'2023-01-07',e:'2023-02-17'}, 159:{s:'2023-02-18',e:'2023-04-01'}, 160:{s:'2023-04-08',e:'2023-05-19'}, 161:{s:'2023-05-20',e:'2023-07-01'}, 162:{s:'2023-07-08',e:'2023-08-18'}, 163:{s:'2023-08-19',e:'2023-09-30'}, 164:{s:'2023-10-07',e:'2023-11-17'}, 165:{s:'2023-11-18',e:'2023-12-30'}, 166:{s:'2024-01-06',e:'2024-02-23'}, 167:{s:'2024-02-24',e:'2024-04-05'}, 168:{s:'2024-04-06',e:'2024-05-17'}, 169:{s:'2024-05-18',e:'2024-06-29'}, 170:{s:'2024-07-06',e:'2024-08-16'}, 171:{s:'2024-08-17',e:'2024-09-28'}, 172:{s:'2024-10-05',e:'2024-11-15'}, 173:{s:'2024-11-16',e:'2024-12-28'}, 174:{s:'2025-01-04',e:'2025-02-14'}, 175:{s:'2025-02-15',e:'2025-03-28'}, 176:{s:'2025-04-05',e:'2025-05-16'}, 177:{s:'2025-05-17',e:'2025-06-28'}, 178:{s:'2025-07-05',e:'2025-08-15'}
-    };
-
-    const toUTC = (iso) => { const [y,m,d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m-1, d)); };
-    const getTerm = (n) => TIMELINE[n] ? { start: toUTC(TIMELINE[n].s), end: toUTC(TIMELINE[n].e) } : null;
-    const DAYS = 24*60*60*1000;
-    const TWO_YEARS = 730; // strict
-
-    // Detect the current term from today's date (UTC) and prefill/reset when needed
-    function currentTermFromToday(){
-      const now = new Date();
-      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      for (const key of Object.keys(TIMELINE)){
-        const t = getTerm(parseInt(key,10));
-        if (t && todayUTC >= t.start && todayUTC <= t.end) return parseInt(key,10);
-      }
-      return null;
-    }
-    function autoSetCurrentTermIfEmptyOrStale(){
-      const el = document.getElementById('globalTerm');
-      if (!el) return;
-      const detected = currentTermFromToday();
-      if (detected == null) return;
-      const now = new Date();
-      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const raw = String(el.value || '').trim();
-      const val = parseInt(raw, 10);
-      if (!raw) { el.value = detected; return; }
-      const t = getTerm(val);
-      if (!t || todayUTC < t.start || todayUTC > t.end) {
-        el.value = detected;
-      }
-    }
-
-    function getHasSpirits(){
-      const el = $('#hasSpirits');
-      return el ? el.value : 'no';
-    }
-    function getHasAdults(){
-      const el = $('#hasAdults');
-      return el ? el.value : 'no';
-    }
-
-    function readEntries(){
-      return $$('.character').map((wrap, i) => {
-        const get = id => wrap.querySelector('#' + id + '-' + i);
-        return {
-          name: get('name') ? get('name').value : '',
-          adultCreated: get('adultCreated') ? get('adultCreated').value : 'no',
-          spirit: get('spirit') ? get('spirit').value : 'no',
-          joined: get('joined') ? get('joined').value : '',
-          total: get('total') ? get('total').value : '',
-          grad: get('grad') ? get('grad').value : '',
-          posts: get('posts') ? get('posts').value : '0'
-        };
-      });
-    }
-
-    function applyEntries(entries){
-      $$('.character').forEach((wrap, i) => {
-        const set = (id, v) => { const el = wrap.querySelector('#' + id + '-' + i); if (el != null) el.value = v != null ? v : el.value; };
-        const e = entries[i] || { name:'', adultCreated:'no', spirit:'no', joined:'', total:'', grad:'', posts:'0' };
-        set('name', e.name);
-        set('adultCreated', e.adultCreated);
-        set('spirit', e.spirit);
-        set('joined', e.joined);
-        set('total', e.total);
-        set('grad', e.grad);
-        set('posts', e.posts);
-      });
-      updateVisibility();
-    }
-
-    function buildChars() {
-      const prev = readEntries();
-      const n = Math.max(1, parseInt($('#numChars').value || '1', 10));
-      const host = $('#characters');
-
-      const currentCount = $$('.character').length;
-      if (n > currentCount) {
-        for (let i = currentCount; i < n; i++) {
-          const html = $('#charTpl').innerHTML
-            .replaceAll('{{i}}', i)
-            .replaceAll('{{iLabel}}', i + 1);
-          const node = document.createElement('div');
-          node.innerHTML = html.trim();
-          host.appendChild(node.firstElementChild);
-        }
-      } else if (n < currentCount) {
-        for (let i = currentCount - 1; i >= n; i--) {
-          const toRemove = host.querySelector(`.character[data-index="${i}"]`);
-          if (toRemove) host.removeChild(toRemove);
-        }
-      }
-
-      attachListeners();
-      applyEntries(prev);
-      compute();
-      persist();
-    }
-
-    function updateVisibility(){
-      const hasSpirits = getHasSpirits() === 'yes';
-      const hasAdults = getHasAdults() === 'yes';
-      $$('.character').forEach((wrap, i) => {
-        const spiritWrap = wrap.querySelector('.spiritField');
-        const adultCreatedWrap = wrap.querySelector('.adultCreatedField');
-        if (spiritWrap) spiritWrap.classList.toggle('hidden', !hasSpirits);
-        if (adultCreatedWrap) adultCreatedWrap.classList.toggle('hidden', !hasAdults);
-        if (!hasSpirits) { const el = wrap.querySelector('#spirit-' + i); if (el) el.value = 'no'; }
-        if (!hasAdults) { const el = wrap.querySelector('#adultCreated-' + i); if (el) el.value = 'no'; }
-      });
-    }
-
-    function attachListeners(){
-      $$('#characters input, #characters select').forEach(el => {
-        el.oninput = () => { compute(); persist(); };
-        el.onchange = () => { compute(); persist(); };
-      });
-      $$('.btn-clear-one').forEach(btn => {
-        btn.onclick = () => {
-          const i = parseInt(btn.getAttribute('data-i'), 10);
-          clearCharacter(i);
-        };
-      });
-      const gt = $('#globalTerm');
-      if (gt) {
-        gt.oninput = () => { compute(); persist(); };
-        gt.onchange = () => { compute(); persist(); };
-        gt.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); compute(); persist(); }});
-      }
-      const hs = $('#hasSpirits'); if (hs) hs.addEventListener('change', () => { updateVisibility(); compute(); persist(); });
-      const ha = $('#hasAdults'); if (ha) ha.addEventListener('change', () => { updateVisibility(); compute(); persist(); });
-    }
-
-    function compute(){
-      const globalTermVal = $('#globalTerm') && $('#globalTerm').value ? parseInt($('#globalTerm').value, 10) : NaN;
-      const globalTerm = isFinite(globalTermVal) ? getTerm(globalTermVal) : null;
-      const hasSpirits = getHasSpirits() === 'yes';
-      let sum = 0;
-      let counted = 0;
-      let allPerCharOK = true;
-
-      function calcTermsOnboard(joinedNum, currentNum){
-        const j = parseInt(joinedNum, 10);
-        const c = parseInt(currentNum, 10);
-        if (!isFinite(j) || !isFinite(c) || j < 1 || c < 1) return null;
-        if (c < j) return 0;
-        return (c - j + 1);
-      }
-
-      function rl2Status(joinedNum){
-        if (!globalTerm) return { flag: null, note: 'Set the current term to evaluate RL years.' };
-        const j = parseInt(joinedNum, 10);
-        if (!isFinite(j)) return { flag: null, note: '' };
-        const jt = getTerm(j);
-        if (!jt) return { flag: null, note: 'Unknown joined term — add to timeline.' };
-        const minDays = Math.floor((globalTerm.start - jt.end) / DAYS);
-        const maxDays = Math.floor((globalTerm.end - jt.start) / DAYS);
-        if (minDays >= TWO_YEARS) return { flag: true, note: '≥ 2 years (certain)' };
-        if (maxDays < TWO_YEARS) return { flag: false, note: 'Under 2 years (certain)' };
-        return { flag: false, note: 'Could be ≥ 2 years depending on dates — please check exact dates.' };
-      }
-
-      $$('.character').forEach((wrap, i) => {
-        const get = id => wrap.querySelector('#' + id + '-' + i);
-        let posts = 0;
-        const spiritVal = get('spirit') && get('spirit').value;
-        const isSpirit = hasSpirits && spiritVal === 'yes';
-        const joinedVal = get('joined') && get('joined').value;
-        const acEl = wrap.querySelector('#adultCreated-' + i);
-        const isAdultCreated = (getHasAdults() === 'yes') && acEl && acEl.value === 'yes';
-
-        const terms = calcTermsOnboard(joinedVal, $('#globalTerm').value);
-        const termsEl = wrap.querySelector('#terms-' + i);
-        if (termsEl) termsEl.textContent = terms == null ? '—' : (terms === 0 ? '—' : String(terms));
-
-        const rl2 = rl2Status(joinedVal);
-        const rl2pill = wrap.querySelector('#rl2pill-' + i);
-        const rl2note = wrap.querySelector('#rl2note-' + i);
-        if (rl2pill) rl2pill.textContent = rl2.flag === null ? '—' : (rl2.flag ? 'Yes' : 'No');
-        if (rl2note) {
-          const isAmbig = rl2.note && rl2.note.toLowerCase().includes('could be ≥ 2 years');
-          rl2note.classList.toggle('ambig', !!isAmbig);
-          rl2note.innerHTML = isAmbig ? ('<strong>' + rl2.note + '</strong>') : (rl2.note || '');
-        }
-
-        // Auto-calc posts per term from Total posts and Terms on board (inclusive)
-        const totalVal = parseFloat((get('total') && get('total').value) ? get('total').value : '0');
-        let derived = 0;
-        if (terms != null && terms > 0 && isFinite(totalVal) && totalVal >= 0) {
-          derived = totalVal / terms;
-        }
-        const autoEl = wrap.querySelector('#autoPosts-' + i);
-        if (autoEl) autoEl.textContent = derived.toFixed(1);
-        const hiddenPosts = get('posts');
-        if (hiddenPosts) hiddenPosts.value = String(derived);
-        posts = derived;
-
-        // Graduation & sectional averages (only for non–adult-created in AW)
-        const gradBlock = wrap.querySelector('.gradBlock');
-        const showGrad = (!isAdultCreated) && (terms != null && terms > 7);
-        if (gradBlock) gradBlock.classList.toggle('hidden', !showGrad);
-        const gradEl = get('grad');
-        const gradNote = wrap.querySelector('#gradNote-' + i);
-        const avgHGEl = wrap.querySelector('#avgHG-' + i);
-        const avgAWEl = wrap.querySelector('#avgAW-' + i);
-        if (avgHGEl) avgHGEl.textContent = '—';
-        if (avgAWEl) avgAWEl.textContent = '—';
-        if (gradNote) { gradNote.textContent = ''; gradNote.style.color = ''; }
-        if (showGrad) {
-          const gradVal = parseFloat((gradEl && gradEl.value) ? gradEl.value : '');
-          const hgTerms = 7;
-          const awTerms = (terms - 7);
-          if (isFinite(gradVal) && gradVal >= 0) {
-            if (avgHGEl) avgHGEl.textContent = (gradVal / hgTerms).toFixed(1);
-            if (isFinite(totalVal) && totalVal >= gradVal && awTerms > 0) {
-              if (avgAWEl) avgAWEl.textContent = ((totalVal - gradVal) / awTerms).toFixed(1);
-            } else if (awTerms > 0 && isFinite(totalVal) && totalVal < gradVal) {
-              if (gradNote) { gradNote.textContent = 'Graduation total exceeds all-time total — please check values.'; gradNote.style.color = 'var(--bad)'; }
-            }
-          }
-        }
-
-        let minReq = 0;
-        if (isSpirit) {
-          minReq = 0;
-        } else if (rl2.flag) {
-          minReq = 10;
-        } else {
-          minReq = 20;
-        }
-
-        const minEl = wrap.querySelector('#minReq-' + i);
-        if (minEl) minEl.textContent = minReq === 0 ? 'No minimum (spirit)' : (minReq + '+ posts / term');
-        const status = wrap.querySelector('#charStatus-' + i);
-        if (status) {
-          if (isSpirit) {
-            status.textContent = 'OK (spirit)';
-            status.className = 'status ok';
-          } else if (posts >= minReq) {
-            status.textContent = 'Meets per character minimum';
-            status.className = 'status ok';
-          } else {
-            status.textContent = 'Below minimum (' + posts + ' < ' + minReq + ')';
-            status.className = 'status bad';
-            allPerCharOK = false;
-          }
-        }
-
-        const trackEl = wrap.querySelector('#track-' + i);
-        if (trackEl) {
-          if (!isAdultCreated && terms != null && terms > 0) {
-            if (terms > 7) {
-              trackEl.textContent = 'AW terms: ' + (terms - 7);
-            } else {
-              trackEl.textContent = 'Hogwarts Year ' + terms;
-            }
-          } else {
-            trackEl.textContent = '—';
-          }
-        }
-
-        sum += isFinite(posts) ? posts : 0;
-        counted += 1;
-      });
-
-      const avg = counted > 0 ? (sum / counted) : 0;
-      const requiredTotal = counted * 20;
-
-      $('#counted').textContent = String(counted);
-      $('#sumPosts').textContent = sum.toFixed(1);
-      $('#avgPosts').textContent = avg.toFixed(2);
-      $('#requiredTotal').textContent = requiredTotal.toFixed(1);
-
-      const meetsOverall = sum >= requiredTotal;
-      const eligible = allPerCharOK && meetsOverall;
-
-      const eligEl = $('#eligibility');
-      if (eligible) {
-        eligEl.textContent = 'Eligible (activity math passes)';
-        eligEl.className = 'status ok';
-      } else if (meetsOverall && !allPerCharOK) {
-        eligEl.textContent = 'Overall OK, but at least one character is below its minimum';
-        eligEl.className = 'status warn';
-      } else if (!meetsOverall && allPerCharOK) {
-        eligEl.textContent = 'Per character OK, but overall average is below 20';
-        eligEl.className = 'status bad';
-      } else {
-        eligEl.textContent = 'Not eligible (fails per character and overall)';
-        eligEl.className = 'status bad';
-      }
-
-      $('#results').style.display = 'block';
-    }
-
-    function persist(){
-      const payload = {
-        numChars: parseInt($('#numChars').value || '1', 10),
-        currentTerm: ($('#globalTerm') && $('#globalTerm').value) ? parseInt($('#globalTerm').value, 10) : null,
-        hasSpirits: getHasSpirits(),
-        hasAdults: getHasAdults(),
-        entries: readEntries()
-      };
-      localStorage.setItem('pwTwinCalc', JSON.stringify(payload));
-    }
-
-    function restore(){
-      const raw = localStorage.getItem('pwTwinCalc');
-      if (!raw) { buildChars(); return; }
-      try {
-        const data = JSON.parse(raw);
-        $('#numChars').value = data.numChars || 1;
-        if (data.currentTerm) $('#globalTerm').value = data.currentTerm;
-        if (data.hasSpirits) { const el = $('#hasSpirits'); if (el) el.value = data.hasSpirits; }
-        if (data.hasAdults) { const el = $('#hasAdults'); if (el) el.value = data.hasAdults; }
-        const host = $('#characters');
-        host.innerHTML = '';
-        for (let i = 0; i < (data.numChars || 1); i++) {
-          const html = $('#charTpl').innerHTML
-            .replaceAll('{{i}}', i)
-            .replaceAll('{{iLabel}}', i + 1);
-          const node = document.createElement('div');
-          node.innerHTML = html.trim();
-          host.appendChild(node.firstElementChild);
-        }
-        attachListeners();
-        if (Array.isArray(data.entries)) {
-          applyEntries(data.entries);
-        }
-        updateVisibility();
-        compute();
-      } catch (e) {
-        buildChars();
-      }
-    }
-
-    function copySummary(){
-      const currentTerm = ($('#globalTerm') && $('#globalTerm').value) ? $('#globalTerm').value : '';
-      const hasSpirits = getHasSpirits() === 'yes';
-      const hasAdults = getHasAdults() === 'yes';
-      const rows = $$('.character').map((wrap, i) => {
-        const get = id => wrap.querySelector('#' + id + '-' + i);
-        const name = (get('name') && get('name').value) ? get('name').value : ('Character ' + (i+1));
-        const posts = (get('posts') && get('posts').value) ? get('posts').value : '0';
-        const spiritTag = hasSpirits && get('spirit') && get('spirit').value === 'yes' ? ' (spirit)' : '';
-        const adultCreatedTag = hasAdults && get('adultCreated') && get('adultCreated').value === 'yes' ? ' (adult-created)' : '';
-        const rl2txt = (wrap.querySelector('#rl2pill-' + i) || {textContent:'—'}).textContent;
-        const rlnote = (wrap.querySelector('#rl2note-' + i) || {textContent:''}).textContent;
-        const terms = (wrap.querySelector('#terms-' + i) || {textContent:'—'}).textContent;
-        const status = (wrap.querySelector('#charStatus-' + i) || {textContent:''}).textContent;
-        const min = (wrap.querySelector('#minReq-' + i) || {textContent:''}).textContent;
-        return '• ' + name + adultCreatedTag + spiritTag + ': ' + posts + ' posts/term — ' + min + ' — ' + status + ' — 2+ RL yrs: ' + rl2txt + (rlnote ? ' [' + rlnote + ']' : '') + ' — Terms on board: ' + terms;
-      });
-      const counted = $('#counted').textContent;
-      const sum = $('#sumPosts').textContent;
-      const avg = $('#avgPosts').textContent;
-      const req = $('#requiredTotal').textContent;
-      const elig = $('#eligibility').textContent;
-      const txt = `PW Twin Eligibility — Activity Summary\nCurrent term: ${currentTerm}\n\n${rows.join('\n')}\n\nCounted characters: ${counted}\nTotal posts (sum): ${sum}\nOverall average: ${avg}\nRequired total (20 × counted): ${req}\nEligibility: ${elig}`;
-      navigator.clipboard.writeText(txt).then(() => {
-        alert('Summary copied to clipboard');
-      });
-    }
-
-    function demoFill(){
-      $('#globalTerm').value = 170;
-      $('#hasSpirits').value = 'yes';
-      $('#hasAdults').value = 'yes';
-      $('#numChars').value = 3;
-      buildChars();
-      const data = [
-        { name:'John Smith', adultCreated:'no', spirit:'no', joined:'168', total:'120' },
-        { name:'Josh Smythe', adultCreated:'yes', spirit:'no', joined:'155', total:'480' },
-        { name:'Jack Smithson', adultCreated:'yes', spirit:'yes', joined:'150', total:'420' }
-      ];
-      applyEntries(data);
-      updateVisibility();
-      compute();
-      persist();
-    }
-
-    function clearCharacter(i){
-      const wrap = document.querySelector(`.character[data-index="${i}"]`);
-      if (!wrap) return;
-      const set = (id, v) => { const el = wrap.querySelector('#' + id + '-' + i); if (el) el.value = v; };
-      set('name', '');
-      set('adultCreated', 'no');
-      set('spirit', 'no');
-      set('joined', '');
-      set('total', '');
-      set('grad', '');
-      set('posts', '0');
-      const avgHGEl = wrap.querySelector('#avgHG-' + i); if (avgHGEl) avgHGEl.textContent = '—';
-      const avgAWEl = wrap.querySelector('#avgAW-' + i); if (avgAWEl) avgAWEl.textContent = '—';
-      const gradNote = wrap.querySelector('#gradNote-' + i); if (gradNote) gradNote.textContent = '';
-      const termsEl = wrap.querySelector('#terms-' + i);
-      if (termsEl) termsEl.textContent = '—';
-      const rl2pill = wrap.querySelector('#rl2pill-' + i); if (rl2pill) rl2pill.textContent = '—';
-      const rl2note = wrap.querySelector('#rl2note-' + i); if (rl2note) rl2note.textContent = '';
-      const trackEl = wrap.querySelector('#track-' + i); if (trackEl) trackEl.textContent = '—';
-      const autoEl = wrap.querySelector('#autoPosts-' + i); if (autoEl) autoEl.textContent = '0.0';
-      compute();
-      persist();
-    }
-
-    function clearAll(){
-      $$('.character').forEach((_, i) => clearCharacter(i));
-      const hs = $('#hasSpirits'); if (hs) hs.value = 'no';
-      const ha = $('#hasAdults'); if (ha) ha.value = 'no';
-      const gt = $('#globalTerm');
-      const det = currentTermFromToday();
-      if (gt && det != null) gt.value = det; // reset to current term by date
-      updateVisibility();
-      compute();
-      persist();
-    }
-
-    // Non-mutating smoke tests (run only if URL hash contains #selftest)
-    function runSelfTests(){
-      try {
-        console.group('SelfTests');
-        console.assert(typeof currentTermFromToday === 'function', 'currentTermFromToday exists');
-        console.assert(typeof getTerm(178) === 'object' || getTerm(178) === null, 'getTerm returns object/null');
-        console.assert(['a','b'].join('\n') === 'a\nb', 'newline join works');
-        console.groupEnd();
-      } catch (e) { console.warn('SelfTests error', e); }
-    }
-
-    // Hook up top buttons
-    $('#build').addEventListener('click', buildChars);
-    $('#demoFill').addEventListener('click', demoFill);
-    $('#clearAll').addEventListener('click', clearAll);
-    $('#copySummary').addEventListener('click', copySummary);
-    $('#numChars').addEventListener('change', buildChars);
-    $('#numChars').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); buildChars(); }});
-
-    // initial
-    (function init(){
-      try { restore(); } catch(_) { buildChars(); }
-      // If nothing set, default the current term to the one containing today's date
-      autoSetCurrentTermIfEmptyOrStale();
-      compute();
-      persist();
-      if (location.hash.includes('selftest')) runSelfTests();
-    })();
-  </script>
-</body>
-</html>
+  );
+}
